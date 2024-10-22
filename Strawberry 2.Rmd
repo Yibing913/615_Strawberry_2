@@ -1,0 +1,201 @@
+---
+title: "Strawberry 2"
+author: "Yibing Wang"
+date: "2024-10-22"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+```{r}
+library(tidyverse)
+library(ggplot2)
+```
+
+my questions: what's the most popular chemical used in Florida and California? Why we choose A(the most popular one) instead of B (the least popular one)?
+```{r}
+#import csv from ver 7
+chem_data <- read.csv("chem.csv")
+head(chem_data)
+```
+
+```{r}
+# I would like to know which kind of chemicals are mostly used in florida and california 
+#florida 
+florida_data <- chem_data %>%
+  filter(State == "FLORIDA")
+
+florida_missing <- colSums(is.na(florida_data))
+
+ggplot(florida_data, aes(x = type)) +
+  geom_bar(fill = "lightgreen") +
+  ggtitle("Chemical Types in Florida") +
+  xlab("Chemical Type") +
+  ylab("Count") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+#pie chart 
+florida_percentage <- florida_data %>%
+  count(type) %>%
+  mutate(percentage = n / sum(n) * 100)
+
+ggplot(florida_percentage, aes(x = "", y = percentage, fill = type)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar("y", start = 0) +
+  ggtitle("Florida: Chemical Usage Percentage") +
+  theme_void() + 
+  geom_text(aes(label = paste0(round(percentage, 1), "%")), 
+            position = position_stack(vjust = 0.5)) +
+  scale_fill_brewer(palette = "Set3")
+
+
+#Cali
+california_data <- chem_data %>%
+  filter(State == "CALIFORNIA")
+
+california_missing <- colSums(is.na(california_data))
+
+#pie chart
+california_percentage <- california_data %>%
+  count(type) %>%
+  mutate(percentage = n / sum(n) * 100)
+
+ggplot(california_data, aes(x = type)) +
+  geom_bar(fill = "lightblue") +
+  ggtitle("DChemical Types in California") +
+  xlab("Chemical Type") +
+  ylab("Count") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+
+ggplot(california_percentage, aes(x = "", y = percentage, fill = type)) +
+  geom_bar(stat = "identity", width = 1) +
+  coord_polar("y", start = 0) +
+  ggtitle("California: Chemical Usage Percentage") +
+  theme_void() + 
+  geom_text(aes(label = paste0(round(percentage, 1), "%")), 
+            position = position_stack(vjust = 0.5)) +
+  scale_fill_brewer(palette = "Set3")
+```
+For florida, Fungicide are the most commonly used chemical type followed by the insecticide, but in California, insecticides are more prevalent than fungicides. Herbicide are the least used chemical in both states. As we can see from the pie chart, the difference between the fungicide and insecticide isn't big (less than 10%).
+
+For the next step, I would like to know why would people choose fungicide and insecticide instead of using Herbicide. 
+
+```{r}
+#graph of chemical use with florida plus california
+combined_data <- chem_data %>%
+  filter(State %in% c("FLORIDA", "CALIFORNIA")) %>%
+  group_by(type) %>%
+  summarise(total_count = n()) 
+
+ggplot(combined_data, aes(x = type, y = total_count, fill = type)) +
+  geom_bar(stat = "identity") +
+  ggtitle("Total Chemical Usage in Florida and California Combined") +
+  xlab("Chemical Type") +
+  ylab("Total Count") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+  scale_fill_brewer(palette = "Set3")
+```
+
+For fungicide, insecticide and herbicide, find the most popular chemical for each type.
+
+```{r}
+filtered_data <- chem_data %>%
+  filter(State %in% c("FLORIDA", "CALIFORNIA"))
+
+popular_chemicals <- filtered_data %>%
+  group_by(type, chem_name) %>%
+  summarise(count = n()) 
+
+popular_chemicals <- popular_chemicals %>%
+  group_by(type) %>%
+  filter(count == max(count)) %>%
+  ungroup()
+
+print(popular_chemicals)
+```
+
+using azoxystrobin for fungicide, flumioxazin for herbicide and abamectin for insecticide as examples for each type, find ad compare the hazards using PubChemR from QMD
+
+```{r}
+#from qmd
+library(tidyverse)
+library(PubChemR)
+
+GHS_searcher <- function(result_json_object) {
+  hierarchies <- result_json_object[["result"]][["Hierarchies"]][["Hierarchy"]]
+  
+  for (i in seq_along(hierarchies)) {
+    if (hierarchies[[i]][["SourceName"]] == "GHS Classification (UNECE)") {
+      return(i)
+    }
+  }
+  # Return NULL if GHS Classification is not found
+  return(NULL)
+}
+
+hazards_retriever <- function(index, result_json_object) {
+  if (is.null(index)) {
+    return(NA)  # Return NA if GHS data is not available
+  }
+  
+  hierarchy <- result_json_object[["result"]][["Hierarchies"]][["Hierarchy"]][[index]]
+  nodes <- hierarchy[["Node"]]
+  hazard_statements <- c()
+  i <- 1
+  
+  while (i <= length(nodes) && str_detect(nodes[[i]][["Information"]][["Name"]], "^H")) {
+    hazard_statements <- c(hazard_statements, nodes[[i]][["Information"]][["Name"]])
+    i <- i + 1
+  }
+  if (length(hazard_statements) == 0) {
+    return(NA)
+  }
+  return(hazard_statements)
+}
+
+# List of chemicals to process
+chemical_vec <- c("azoxystrobin", "flumioxazin", "abamectin")
+
+# Initialize an empty list to store results
+results_list <- list()
+
+for (chemical in chemical_vec) {
+  result <- get_pug_rest(
+    identifier = chemical,
+    namespace = "name",
+    domain = "compound",
+    operation = "classification",
+    output = "JSON"
+  )
+  
+  ghs_index <- GHS_searcher(result)
+  hazards <- hazards_retriever(ghs_index, result)
+  
+  # Store the results in a list
+  results_list[[chemical]] <- hazards
+}
+
+# Convert the results list into a data frame
+results_df <- results_list %>%
+  enframe(name = "Chemical", value = "Hazard_Statements") %>%
+  unnest(cols = c(Hazard_Statements))
+
+# Display the data frame
+print(results_df)
+
+```
+
+The hazard_statements basically explain my questions. for fungicide (azoxystrobin) and insecticide (abamectin), herbicide (flumioxazin)
+
+
+All three kinds of chemicals are harmful to human, but herbicide has both acute and chronic health risks. 
+
+Same for the environment, Fungicides and insecticides often present high environmental risks, especially in terms of aquatic toxicity, herbicide has long-term environmental risk. Also, the chronic environmental impact of herbicides can contribute to lower usage rates. 
+Fungal and pests can spread rapidly and cause economic losses, but weeds' controlling is usually not that urgent. There are also some non-chemical methods to use instead of herbicide. 
+
+In conclusion, Farmers are more likely to choose fungicides and insecticides more frequently than herbicides because of the immediate crop protection they provide against significant threats like fungal diseases and pests. Even though all three chemicals are harmful to environment and human, herbicide tend to have more chronic long-term risks. 
+
+For future tasks, I think it would be helpful to compare the potential crop losses due to pests, fungal and weeds diseases. Analyzing how sensitive the major crops grown in Florida and California are to pests, fungal and weeds diseases.
+
+
